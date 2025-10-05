@@ -1,0 +1,8 @@
+juriscraper-api/
+├── app.py
+├── requirements.txt
+├── logs/
+│   └── search_log.csv
+└── .github/
+    └── workflows/
+        └── log-sync.yml
