@@ -3,26 +3,35 @@ from fastapi.responses import JSONResponse
 import importlib
 import traceback
 import pkgutil
-import juriscraper.opinions.united_states as us_opinions
+import juriscraper.opinions as opinions_pkg
 
-app = FastAPI(title="Juriscraper API", version="3.0")
+app = FastAPI(
+    title="Juriscraper API",
+    version="4.0",
+    description="API wrapper for Juriscraper to fetch U.S. court opinions and metadata."
+)
 
-# Recursively discover all valid scrapers
-VALID_SCRAPERS = [
-    name.replace("juriscraper.opinions.", "")
-    for _, name, _ in pkgutil.walk_packages(us_opinions.__path__, "united_states.")
-    if not name.endswith("__init__")
-]
+def discover_all_courts():
+    """Recursively find all available Juriscraper opinion scrapers."""
+    scrapers = []
+    for loader, module_name, is_pkg in pkgutil.walk_packages(opinions_pkg.__path__, opinions_pkg.__name__ + "."):
+        # Only include actual court scrapers under united_states.*
+        if "juriscraper.opinions.united_states" in module_name and not module_name.endswith("__init__"):
+            name = module_name.replace("juriscraper.opinions.", "")
+            scrapers.append(name)
+    return sorted(scrapers)
+
+# Build once at startup
+ALL_COURTS = discover_all_courts()
 
 @app.get("/")
-def home():
-    """Root endpoint listing usage and scraper count"""
+def index():
+    """Root endpoint — list all available courts."""
     return {
         "message": "Welcome to the Juriscraper API!",
-        "example_usage": "/scrape?court=united_states.federal_appellate.ca9_p&max_items=3",
-        "docs": "/docs",
-        "valid_example": VALID_SCRAPERS[:5],
-        "count": len(VALID_SCRAPERS),
+        "description": "Use /scrape?court=<court_path>&max_items=3 to fetch opinions.",
+        "total_courts": len(ALL_COURTS),
+        "available_courts": ALL_COURTS
     }
 
 @app.get("/scrape")
@@ -30,14 +39,14 @@ def scrape(
     court: str = Query(..., description="Court path, e.g. united_states.federal_appellate.ca9_p"),
     max_items: int = Query(3, ge=1, le=50, description="Maximum number of results")
 ):
-    """Scrape opinions using Juriscraper"""
+    """Scrape and return recent opinions for the given court."""
     try:
         court = court.strip().replace("juriscraper.", "").replace("..", ".")
-        if court not in VALID_SCRAPERS:
-            raise HTTPException(status_code=404, detail=f"Scraper not found: {court}")
+        if court not in ALL_COURTS:
+            raise HTTPException(status_code=404, detail=f"Court scraper not found: {court}")
 
-        mod = importlib.import_module(f"juriscraper.opinions.{court}")
-        site = mod.Site()
+        module = importlib.import_module(f"juriscraper.opinions.{court}")
+        site = module.Site()
         site.build_court_object()
 
         results = []
@@ -52,7 +61,7 @@ def scrape(
                 "precedential_status": opinion.get("precedential_status"),
             })
 
-        return {"court": court, "results": results}
+        return {"court": court, "result_count": len(results), "results": results}
 
     except ModuleNotFoundError:
         raise HTTPException(status_code=404, detail=f"Scraper not found: {court}")
@@ -61,3 +70,4 @@ def scrape(
             status_code=500,
             content={"error": str(e), "traceback": traceback.format_exc()},
         )
+
