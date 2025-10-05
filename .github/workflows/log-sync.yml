@@ -1,0 +1,36 @@
+name: Auto Sync Juriscraper Logs
+
+on:
+  schedule:
+    - cron: "0 6 * * *"  # Every day at 6:00 UTC (1:00 AM US Central)
+  workflow_dispatch:     # Allow manual runs from GitHub UI
+
+permissions:
+  contents: write
+
+jobs:
+  sync-logs:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Git
+        run: |
+          git config user.name "Juriscraper AutoLogger"
+          git config user.email "juriscraper-logs@users.noreply.github.com"
+
+      - name: Commit new log entries
+        run: |
+          if [ -d "logs" ]; then
+            git add logs/
+            if git diff --cached --quiet; then
+              echo "No new log updates."
+            else
+              git commit -m "Auto-sync Juriscraper logs ($(date -u))"
+              git push
+            fi
+          else
+            echo "No logs directory found; skipping."
+          fi
