@@ -12,6 +12,8 @@ from typing import Dict, List, Optional
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 
+COURTLISTENER_BASE = "https://www.courtlistener.com/api/rest/v4"
+CL_TOKEN = os.getenv("COURTLISTENER_TOKEN")  # set in environment variables
 APP_VERSION = "2.5.0"
 
 app = FastAPI(
@@ -248,9 +250,6 @@ def scrape(
             "traceback_tail": _short_tb(),
             "timestamp": datetime.utcnow().isoformat() + "Z",
         }
-
-COURTLISTENER_BASE = "https://www.courtlistener.com/api/rest/v4"
-CL_TOKEN = os.getenv("COURTLISTENER_TOKEN")  # set in environment variables
 
 def cl_get(endpoint: str, params: dict = None):
     """Helper function to query the CourtListener API."""
