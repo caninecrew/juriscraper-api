@@ -34,24 +34,43 @@ def safe_scrape(site, max_items: int = 3):
     Returns parsed results or structured error info.
     """
     try:
-        # Some Juriscraper scrapers don't require build_court_object()
-        if hasattr(site, "build_court_object"):
-            site.build_court_object()
+        # Only call build_court_object() if defined *and callable*
+        if hasattr(site, "build_court_object") and callable(site.build_court_object):
+            try:
+                site.build_court_object()
+            except Exception:
+                # silently ignore if it’s not supported
+                pass
 
-        site.parse()
+        # Some newer scrapers require site.run()
+        if hasattr(site, "run") and callable(site.run):
+            site.run()
+        elif hasattr(site, "parse") and callable(site.parse):
+            site.parse()
+        else:
+            return {
+                "status": "error",
+                "error": "Scraper does not define run() or parse() methods",
+                "trace": "Juriscraper interface mismatch"
+            }
 
-        # Collect data consistently
+        # Gather results
         data = []
-        if hasattr(site, "opinions"):
-            for item in site.opinions[:max_items]:
-                data.append({
-                    "date": str(item.get("date")),
-                    "name": item.get("name"),
-                    "url": item.get("url"),
-                    "docket": item.get("docket"),
-                })
-        elif hasattr(site, "case_names"):
-            data = [{"name": n} for n in site.case_names[:max_items]]
+        # Check known possible outputs dynamically
+        for attr in ["opinions", "cases", "items"]:
+            if hasattr(site, attr):
+                values = getattr(site, attr)
+                if isinstance(values, list):
+                    for item in values[:max_items]:
+                        if isinstance(item, dict):
+                            data.append(item)
+                        else:
+                            data.append({"value": str(item)})
+                break
+
+        # Fallback for older API pattern
+        if not data and hasattr(site, "case_names"):
+            data = [{"name": n} for n in getattr(site, "case_names", [])[:max_items]]
 
         return {"status": "ok", "count": len(data), "data": data}
 
