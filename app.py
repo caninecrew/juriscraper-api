@@ -2,14 +2,15 @@ from fastapi import FastAPI, Query
 from fastapi.middleware.cors import CORSMiddleware
 from juriscraper.OpinionSite import OpinionSite
 import traceback
+from datetime import datetime
 
 app = FastAPI(
     title="Juriscraper API",
-    description="Scrapes federal and state court opinions via Juriscraper, including full metadata.",
-    version="2.1.0",
+    description="Scrapes federal and state court opinions via Juriscraper, with metadata and summary mode.",
+    version="2.2.0",
 )
 
-# Enable CORS for CustomGPT and external use
+# Enable CORS for CustomGPT and web integrations
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -20,13 +21,13 @@ app.add_middleware(
 @app.get("/")
 def root():
     """
-    Root endpoint for API info and available usage pattern.
+    Root endpoint for info and example.
     """
     return {
         "message": "Welcome to the Juriscraper API!",
-        "example_usage": "/scrape?court=united_states.federal_appellate.ca9_p&max_items=3",
+        "example_usage": "/scrape?court=united_states.federal_appellate.ca9_p&max_items=3&summary=true",
         "docs": "/docs",
-        "description": "Use /scrape to fetch cases with metadata. Each court scraper can be found under united_states.*",
+        "description": "Use /scrape to fetch cases with metadata or summary mode. Pass ?summary=true for short summaries.",
     }
 
 
@@ -34,16 +35,16 @@ def root():
 def scrape(
     court: str = Query(..., description="Court scraper path (e.g. united_states.federal_appellate.ca9_p)"),
     max_items: int = Query(5, description="Maximum number of cases to return (default 5)"),
+    summary: bool = Query(False, description="If true, returns short summaries instead of full metadata")
 ):
     """
-    Core endpoint: runs a Juriscraper scraper for the given court and returns structured data.
+    Runs a Juriscraper scraper for the given court and returns structured data.
+    If `summary=true`, returns concise summaries for GPT integration.
     """
     try:
-        # Initialize the court scraper
         site = OpinionSite(court)
         site.parse()
 
-        # Helper for safely accessing attributes
         def safe_get(attr, i):
             try:
                 return getattr(site, attr)[i]
@@ -54,7 +55,8 @@ def scrape(
         total = min(max_items, len(site.case_names))
 
         for i in range(total):
-            data = {
+            # Full metadata
+            case_data = {
                 "name": safe_get("case_names", i),
                 "date": str(safe_get("case_dates", i)),
                 "docket_number": safe_get("docket_numbers", i),
@@ -72,17 +74,31 @@ def scrape(
                 "party_names": safe_get("party_names", i) if hasattr(site, "party_names") else None,
                 "status": "ok"
             }
-            results.append(data)
+
+            if summary:
+                # Short GPT-friendly summary
+                case_name = case_data["name"] or "Unknown Case"
+                date_str = case_data["date"] or "Unknown Date"
+                disposition = case_data["disposition"] or "No disposition available"
+                short = f"{case_name} ({date_str}) — {disposition}. See {case_data['download_url']} for details."
+                results.append({"summary": short})
+            else:
+                results.append(case_data)
 
         return {
             "court": court,
             "status": "ok",
             "count": len(results),
+            "mode": "summary" if summary else "full",
             "data": results,
+            "timestamp": datetime.utcnow().isoformat() + "Z"
         }
 
     except Exception as e:
         return {
             "error": str(e),
             "traceback": traceback.format_exc(),
+            "court": court,
+            "status": "failed"
         }
+
