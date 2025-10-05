@@ -1,6 +1,12 @@
 fastapi
 uvicorn
-juriscraper
+juriscraper==2.6.92
 lxml
 selenium
 requests
+tqdm
+orjson
+pandas
+numpy
+sentence-transformers==2.7.0
+torch==2.4.1
