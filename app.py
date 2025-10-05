@@ -5,10 +5,10 @@ import importlib
 import os
 import pkgutil
 import traceback
+import requests
 import subprocess
 from datetime import datetime
 from typing import Dict, List, Optional
-
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -248,4 +248,47 @@ def scrape(
             "traceback_tail": _short_tb(),
             "timestamp": datetime.utcnow().isoformat() + "Z",
         }
+
+COURTLISTENER_BASE = "https://www.courtlistener.com/api/rest/v4"
+CL_TOKEN = os.getenv("COURTLISTENER_TOKEN")  # set in environment variables
+
+def cl_get(endpoint: str, params: dict = None):
+    """Helper function to query the CourtListener API."""
+    headers = {"Authorization": f"Token {CL_TOKEN}"}
+    r = requests.get(f"{COURTLISTENER_BASE}/{endpoint.strip('/')}/", headers=headers, params=params or {})
+    if r.status_code != 200:
+        return {"status": "failed", "error": r.text, "code": r.status_code}
+    return r.json()
+
+
+@app.get("/courtlistener/cluster")
+def get_cluster(
+    q: str = Query(..., description="Search query, e.g., 'environmental regulation 2022'"),
+    limit: int = Query(10, ge=1, le=50),
+):
+    """Search case clusters on CourtListener."""
+    data = cl_get("clusters", {"q": q, "page_size": limit})
+    return {"status": "ok", "type": "cluster", "query": q, "results": data}
+
+
+@app.get("/courtlistener/opinion")
+def get_opinion(
+    q: str = Query(..., description="Search query, e.g., case name or citation"),
+    limit: int = Query(10, ge=1, le=50),
+):
+    """Search full text opinions on CourtListener."""
+    data = cl_get("opinions", {"q": q, "page_size": limit})
+    return {"status": "ok", "type": "opinion", "query": q, "results": data}
+
+
+@app.get("/courtlistener/court")
+def get_court_info(
+    court_id: Optional[str] = Query(None, description="Court ID (e.g., 'ca9' or 'scotus')"),
+):
+    """Get details for a specific court or all courts."""
+    if court_id:
+        data = cl_get(f"courts/{court_id}")
+    else:
+        data = cl_get("courts")
+    return {"status": "ok", "type": "court", "data": data}
 
