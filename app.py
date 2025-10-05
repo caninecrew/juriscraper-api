@@ -3,13 +3,14 @@ from fastapi.responses import JSONResponse
 import importlib
 import traceback
 import pkgutil
-import juriscraper.opinions
+import juriscraper.opinions.united_states as us_opinions  # <-- key change
 
-app = FastAPI(title="Juriscraper API", version="2.0")
+app = FastAPI(title="Juriscraper API", version="2.1")
 
-# Automatically generate valid scraper paths
+# Auto-discover all available scrapers
 VALID_SCRAPERS = [
-    name for _, name, _ in pkgutil.walk_packages(juriscraper.opinions.__path__, "united_states.")
+    name.replace("juriscraper.opinions.", "")
+    for _, name, _ in pkgutil.walk_packages(us_opinions.__path__, "united_states.")
 ]
 
 @app.get("/")
@@ -18,9 +19,9 @@ def home():
         "message": "Welcome to the Juriscraper API!",
         "example_usage": "/scrape?court=united_states.federal_appellate.ca9&max_items=3",
         "docs": "/docs",
-        "valid_example": VALID_SCRAPERS[:5]  # show the first 5
+        "valid_example": VALID_SCRAPERS[:5],
+        "count": len(VALID_SCRAPERS)
     }
-
 
 @app.get("/scrape")
 def scrape(
@@ -28,13 +29,10 @@ def scrape(
     max_items: int = 3
 ):
     try:
-        # sanitize user input
         court = court.strip().replace("juriscraper.", "").replace("..", ".")
-        
         if court not in VALID_SCRAPERS:
             raise HTTPException(status_code=404, detail=f"Court not recognized: {court}")
 
-        # dynamic import
         mod = importlib.import_module(f"juriscraper.opinions.{court}")
         site = mod.Site()
         site.build_court_object()
@@ -60,3 +58,4 @@ def scrape(
             status_code=500,
             content={"error": str(e), "traceback": traceback.format_exc()},
         )
+
