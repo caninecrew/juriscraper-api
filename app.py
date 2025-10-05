@@ -1,144 +1,89 @@
 from fastapi import FastAPI, Query
-from importlib import import_module
+from fastapi.responses import JSONResponse
 import traceback
-import pkgutil
-import json
-from datetime import datetime
+import importlib
 
-app = FastAPI(title="Juriscraper API", version="2.0.0")
+app = FastAPI(title="Juriscraper API", version="1.0")
 
-# ---------- Utility: Safe dynamic import ---------- #
-def safe_load_site(court: str):
-    """
-    Safely loads a Juriscraper Site object for the given court path.
-    Always returns either a valid Site instance or an error dict.
-    """
-    try:
-        module_path = f"juriscraper.opinions.{court}"
-        module = import_module(module_path)
-        if not hasattr(module, "Site"):
-            return {"error": f"No 'Site' class found in {module_path}", "status": "unsupported"}
-        site = module.Site()
-        return site
-    except Exception as e:
-        return {
-            "error": f"Failed to load scraper for {court}",
-            "exception": str(e),
-            "trace": traceback.format_exc(limit=2)
-        }
-
-# ---------- Utility: Safe scraper execution ---------- #
 def safe_scrape(site, max_items: int = 3):
     """
-    Executes a Juriscraper scraper safely.
-    Returns parsed results or structured error info.
+    Safely runs a Juriscraper site object.
+    Prevents AttributeErrors like 'build_court_object' missing.
     """
     try:
-        # Only call build_court_object() if defined *and callable*
+        # Some scrapers need to be initialized
         if hasattr(site, "build_court_object") and callable(site.build_court_object):
             try:
                 site.build_court_object()
             except Exception:
-                # silently ignore if it’s not supported
-                pass
+                pass  # not critical, continue silently
 
-        # Some newer scrapers require site.run()
+        # Run or parse depending on implementation
         if hasattr(site, "run") and callable(site.run):
             site.run()
         elif hasattr(site, "parse") and callable(site.parse):
             site.parse()
-        else:
-            return {
-                "status": "error",
-                "error": "Scraper does not define run() or parse() methods",
-                "trace": "Juriscraper interface mismatch"
-            }
 
-        # Gather results
-        data = []
-        # Check known possible outputs dynamically
+        # Collect results from available attributes
+        results = []
         for attr in ["opinions", "cases", "items"]:
             if hasattr(site, attr):
-                values = getattr(site, attr)
-                if isinstance(values, list):
-                    for item in values[:max_items]:
+                data = getattr(site, attr)
+                if isinstance(data, list):
+                    for item in data[:max_items]:
                         if isinstance(item, dict):
-                            data.append(item)
+                            results.append(item)
                         else:
-                            data.append({"value": str(item)})
+                            results.append({"text": str(item)})
                 break
 
-        # Fallback for older API pattern
-        if not data and hasattr(site, "case_names"):
-            data = [{"name": n} for n in getattr(site, "case_names", [])[:max_items]]
+        if not results and hasattr(site, "case_names"):
+            names = getattr(site, "case_names", [])
+            results = [{"name": n} for n in names[:max_items]]
 
-        return {"status": "ok", "count": len(data), "data": data}
+        return {"status": "ok", "count": len(results), "data": results}
 
     except Exception as e:
-        return {
-            "status": "error",
-            "error": str(e),
-            "trace": traceback.format_exc(limit=3)
-        }
+        return {"status": "error", "error": str(e), "trace": traceback.format_exc(limit=3)}
 
-# ---------- Endpoint: Home (list courts) ---------- #
+
 @app.get("/")
-def index():
-    """
-    Root endpoint: lists all available Juriscraper courts.
-    """
-    try:
-        import juriscraper.opinions.united_states as us
-        court_paths = []
+def home():
+    return {
+        "message": "Welcome to the Juriscraper API!",
+        "description": "Use /scrape?court=<court_path>&max_items=3 to fetch opinions.",
+        "example_usage": "/scrape?court=united_states.federal_appellate.ca9_p&max_items=3"
+    }
 
-        # Recursively discover all modules
-        def walk_packages(path, prefix):
-            for _, name, ispkg in pkgutil.iter_modules(path):
-                full_name = f"{prefix}.{name}"
-                court_paths.append(full_name)
-                if ispkg:
-                    mod = import_module(full_name)
-                    if hasattr(mod, "__path__"):
-                        walk_packages(mod.__path__, full_name)
 
-        walk_packages(us.__path__, "united_states")
-
-        return {
-            "message": "Welcome to the Juriscraper API!",
-            "description": "Use /scrape?court=<court_path>&max_items=3 to fetch opinions.",
-            "total_courts": len(court_paths),
-            "available_courts": court_paths[:50],  # show first 50 for brevity
-            "example_usage": "/scrape?court=united_states.federal_appellate.ca9_p&max_items=3",
-            "docs": "/docs"
-        }
-
-    except Exception as e:
-        return {"message": "Error loading courts", "error": str(e)}
-
-# ---------- Endpoint: Scrape ---------- #
 @app.get("/scrape")
-def scrape(court: str = Query(..., description="Court module path (e.g. united_states.federal_appellate.ca9_p)"),
-           max_items: int = Query(3, description="Number of opinions to fetch")):
-    """
-    Scrapes the requested court for opinions using Juriscraper.
-    Handles all errors gracefully and never crashes.
-    """
-    site = safe_load_site(court)
+def scrape(
+    court: str = Query(..., description="Juriscraper court module path"),
+    max_items: int = Query(3, ge=1, le=20)
+):
+    try:
+        # Import dynamically
+        module_path = f"juriscraper.opinions.{court}"
+        module = importlib.import_module(module_path)
 
-    # If scraper failed to load
-    if isinstance(site, dict) and "error" in site:
-        return {
-            "message": "Scraper unavailable or broken.",
-            "court": court,
-            **site
-        }
+        # Get Site class dynamically
+        if hasattr(module, "Site"):
+            site = module.Site()
+        else:
+            return JSONResponse(status_code=400, content={
+                "error": f"No Site class in {module_path}"
+            })
 
-    # Run safely
-    result = safe_scrape(site, max_items=max_items)
+        result = safe_scrape(site, max_items=max_items)
+        result["court"] = court
+        return result
 
-    # Log any persistent failures for debugging
-    if result.get("status") == "error":
-        with open("broken_scrapers.log", "a") as f:
-            f.write(f"{datetime.now()} - {court} - {result['error']}\n")
-
-    return {"court": court, **result}
+    except ModuleNotFoundError:
+        return JSONResponse(status_code=404, content={
+            "error": f"Court scraper not found: juriscraper.opinions.{court}"
+        })
+    except Exception as e:
+        return JSONResponse(status_code=500, content={
+            "error": str(e),
+            "traceback": traceback.format_exc(limit=3)
+        })
