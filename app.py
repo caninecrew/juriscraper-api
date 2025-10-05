@@ -3,21 +3,22 @@ from fastapi.responses import JSONResponse
 import importlib
 import traceback
 import pkgutil
-import juriscraper.opinions.united_states as us_opinions  # <-- key change
+import juriscraper.opinions.united_states as us_opinions
 
-app = FastAPI(title="Juriscraper API", version="2.1")
+app = FastAPI(title="Juriscraper API", version="2.2")
 
-# Auto-discover all available scrapers
+# Recursively discover every scraper module in the united_states package
 VALID_SCRAPERS = [
     name.replace("juriscraper.opinions.", "")
     for _, name, _ in pkgutil.walk_packages(us_opinions.__path__, "united_states.")
+    if not name.endswith("__init__")
 ]
 
 @app.get("/")
 def home():
     return {
         "message": "Welcome to the Juriscraper API!",
-        "example_usage": "/scrape?court=united_states.federal_appellate.ca9&max_items=3",
+        "example_usage": "/scrape?court=united_states.federal_appellate.ca9_p&max_items=3",
         "docs": "/docs",
         "valid_example": VALID_SCRAPERS[:5],
         "count": len(VALID_SCRAPERS)
@@ -25,7 +26,7 @@ def home():
 
 @app.get("/scrape")
 def scrape(
-    court: str = Query(..., description="Example: united_states.federal_appellate.ca9"),
+    court: str = Query(..., description="Example: united_states.federal_appellate.ca9_p"),
     max_items: int = 3
 ):
     try:
